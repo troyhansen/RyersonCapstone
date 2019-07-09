@@ -1,0 +1,251 @@
+---
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r}
+### clear environment, load libraries, and set working directory
+rm(list = ls())
+library(purrr)
+library(dplyr)
+library(caret)
+library(mlbench)
+library(mltools)
+library(e1071)
+library(data.table)
+library(doParallel)
+
+setwd("C:/Users/Troy Hansen/Documents/Ryerson Data Certificate/Capstone Project/Data")
+
+### import data
+df_test <- read.csv("test.csv")
+df_train <- read.csv("train.csv")
+```
+
+```{r}
+### test and train datasets combined for cleaning and recoding
+df_test$SalePrice <- NA
+df_combine <- rbind.data.frame(df_train, df_test)
+```
+
+```{r}
+### going across all variables to make sure data is coded correctly
+df_combine$MSSubClass <- as.factor(df_combine$MSSubClass) #recoded to be factor
+df_combine$MoSold <- as.factor(df_combine$MoSold) #recoded to be factor
+df_combine$YrSold <- as.factor(df_combine$YrSold) #recoded to be factor
+
+df_combine$ExterQual <- recode(df_combine$ExterQual, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$ExterCond <- recode(df_combine$ExterCond, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$BsmtQual <- recode(df_combine$BsmtQual, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$BsmtCond <- recode(df_combine$BsmtCond, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$BsmtExposure <- recode(df_combine$BsmtExposure, "No"=1,"Mn"=2,"Av"=3,"Gd"=4) #recoded from factor to ordinal
+df_combine$BsmtFinType1 <- recode(df_combine$BsmtFinType1, "Unf"=1,"LwQ"=2,"Rec"=3,"BLQ"=4,"ALQ"=5, "GLQ"=6) #recoded from factor to ordinal
+df_combine$BsmtFinType2 <- recode(df_combine$BsmtFinType2, "Unf"=1,"LwQ"=2,"Rec"=3,"BLQ"=4,"ALQ"=5, "GLQ"=6) #recoded from factor to ordinal
+df_combine$HeatingQC <- recode(df_combine$HeatingQC, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$CentralAir <- recode(df_combine$CentralAir, "N"=0,"Y"=1) #recoded from factor to ordinal
+df_combine$KitchenQual <- recode(df_combine$KitchenQual, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$FireplaceQu <- recode(df_combine$FireplaceQu, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$GarageFinish <- recode(df_combine$GarageFinish, "Unf"=1,"RFn"=2,"Fin"=3) #recoded from factor to ordinal
+df_combine$GarageQual <- recode(df_combine$GarageQual, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$GarageCond <- recode(df_combine$GarageCond, "Po"=1,"Fa"=2,"TA"=3,"Gd"=4,"Ex"=5) #recoded from factor to ordinal
+df_combine$PoolQC <- recode(df_combine$PoolQC,"Fa"=1,"TA"=2,"Gd"=3,"Ex"=4) #recoded from factor to ordinal
+```
+
+```{r}
+### going across all variables to ensure missing data is handled for all variables
+missing_data <- apply(df_combine, 2, function (x) sum(is.na(x)))
+missing_data <- sort(missing_data[missing_data>0], decreasing = T)
+missing_data
+df_combine <- df_combine[,-which(colnames(df_combine) %in% c("PoolQC", "MiscFeature", "Alley", "Fence", "FireplaceQu"))] #removing varaiables with >50% NA's 
+df_combine <- df_combine[,-which(colnames(df_combine) %in% c("GarageYrBlt"))] #removing variable as inapplicable to those without a garage. And already have plenty of (highly correlated) garage variables 
+
+levels(df_combine$GarageType) <- c(levels(df_combine$GarageType), "NoGarage") # add level to factor variable for "No Garage"
+df_combine$GarageType[is.na(df_combine$GarageType)] <- "NoGarage" # convert NA to new factor level
+
+df_combine$LotFrontage[is.na(df_combine$LotFrontage)] <- 0 #replace NA with zero
+df_combine$MasVnrArea[is.na(df_combine$MasVnrArea)] <- 0 #replace NA with zero
+df_combine$GarageFinish[is.na(df_combine$GarageFinish)] <- 0 #replace NA with zero
+df_combine$GarageQual[is.na(df_combine$GarageQual)] <- 0 #replace NA with zero
+df_combine$GarageCond[is.na(df_combine$GarageCond)] <- 0 #replace NA with zero
+df_combine$BsmtCond[is.na(df_combine$BsmtCond)] <- 0 #replace NA with zero
+df_combine$BsmtExposure[is.na(df_combine$BsmtExposure)] <- 0 #replace NA with zero
+df_combine$BsmtQual[is.na(df_combine$BsmtQual)] <- 0 #replace NA with zero
+df_combine$BsmtFinType1[is.na(df_combine$BsmtFinType1)] <- 0 #replace NA with zero
+df_combine$BsmtFinType2[is.na(df_combine$BsmtFinType2)] <- 0 #replace NA with zero
+df_combine$BsmtFinSF1[is.na(df_combine$BsmtFinSF1)] <- 0 #replace NA with zero
+df_combine$BsmtFinSF2[is.na(df_combine$BsmtFinSF2)] <- 0 #replace NA with zero
+df_combine$BsmtUnfSF[is.na(df_combine$BsmtUnfSF)] <- 0 #replace NA with zero
+df_combine$TotalBsmtSF[is.na(df_combine$TotalBsmtSF)] <- 0 #replace NA with zero
+df_combine$BsmtFullBath[is.na(df_combine$BsmtFullBath)] <- 0 #replace NA with zero
+df_combine$BsmtHalfBath[is.na(df_combine$BsmtHalfBath)] <- 0 #replace NA with zero
+
+df_combine$MasVnrType[is.na(df_combine$MasVnrType)] <- names(which.max(summary(df_combine$MasVnrType))) #replace NA with most common factor level
+df_combine$MSZoning[is.na(df_combine$MSZoning)] <- names(which.max(summary(df_combine$MSZoning))) #replace NA with most common factor level
+df_combine$Utilities[is.na(df_combine$Utilities)] <- names(which.max(summary(df_combine$Utilities))) #replace NA with most common factor level
+df_combine$Functional[is.na(df_combine$Functional)] <- names(which.max(summary(df_combine$Functional))) #replace NA with most common factor level
+df_combine$Exterior1st[is.na(df_combine$Exterior1st)] <- names(which.max(summary(df_combine$Exterior1st))) #replace NA with most common factor level
+df_combine$Exterior2nd[is.na(df_combine$Exterior2nd)] <- names(which.max(summary(df_combine$Exterior2nd))) #replace NA with most common factor level
+df_combine$Electrical[is.na(df_combine$Electrical)] <- names(which.max(summary(df_combine$Electrical))) #replace NA with most common factor level
+df_combine$SaleType[is.na(df_combine$SaleType)] <- names(which.max(summary(df_combine$SaleType))) #replace NA with most common factor level
+
+df_combine$KitchenQual[is.na(df_combine$KitchenQual)] <- median(df_combine$KitchenQual, na.rm = T) #replace NA with median
+df_combine$GarageCars[is.na(df_combine$GarageCars)] <- median(df_combine$GarageCars, na.rm = T) #replace NA with median
+df_combine$GarageArea[is.na(df_combine$GarageArea)] <- median(df_combine$GarageArea, na.rm = T) #replace NA with median
+
+missing_data <- apply(df_combine, 2, function (x) sum(is.na(x)))
+missing_data <- sort(missing_data[missing_data>0], decreasing = T)
+missing_data
+# only remaining missing variable is SalePrice (these are the cases from the test dataset which have had the data stripped for this variable)
+```
+
+```{r}
+### Creating aggregate variables
+
+# total sq footage of house
+sqFt_col <- c("X1stFlrSF","X2ndFlrSF", "LowQualFinSF", "BsmtFinSF1", "BsmtFinSF2", "BsmtUnfSF", "TotalBsmtSF", "GrLivArea")
+cor(df_combine$SalePrice, df_combine[,which(names(df_combine) %in% sqFt_col)], use = "pairwise.complete.obs")
+df_combine$totalSqFt <- df_combine$GrLivArea + df_combine$TotalBsmtSF
+cor(df_combine$SalePrice, df_combine$totalSqFt, use = "pairwise.complete.obs")
+cor(df_combine$totalSqFt, df_combine[,which(names(df_combine) %in% sqFt_col)], use = "pairwise.complete.obs")
+
+# total number of bathrooms in house 
+bath_col <- c("BsmtFullBath","BsmtHalfBath", "FullBath", "HalfBath")
+cor(df_combine$SalePrice, df_combine[,which(names(df_combine) %in% bath_col)], use = "pairwise.complete.obs")
+df_combine$totalBath <- df_combine$BsmtFullBath + df_combine$BsmtHalfBath*0.5 + df_combine$FullBath + df_combine$HalfBath*0.5
+cor(df_combine$SalePrice, df_combine$totalBath, use = "pairwise.complete.obs")
+cor(df_combine$totalBath, df_combine[,which(names(df_combine) %in% bath_col)], use = "pairwise.complete.obs")
+
+# total deck/porch space
+deckporchSqft_col <- c("WoodDeckSF","OpenPorchSF", "EnclosedPorch", "X3SsnPorch", "ScreenPorch")
+cor(df_combine$SalePrice, df_combine[,which(names(df_combine) %in% deckporchSqft_col)], use = "pairwise.complete.obs")
+df_combine$totaldeckporchSqft <- df_combine$WoodDeckSF + df_combine$OpenPorchSF + df_combine$X3SsnPorch + df_combine$ScreenPorch
+cor(df_combine$SalePrice, df_combine$totaldeckporchSqft, use = "pairwise.complete.obs")
+cor(df_combine$totaldeckporchSqft, df_combine[,which(names(df_combine) %in% deckporchSqft_col)], use = "pairwise.complete.obs")
+```
+
+```{r}
+### One-hot encode factors
+one_hot_encoded_factors <- as.data.frame(one_hot(as.data.table(select_if(df_combine, is.factor)))) 
+df_combine <- cbind.data.frame(df_combine, one_hot_encoded_factors)
+df_combine <- select_if(df_combine, is.numeric)
+```
+
+```{r}
+### identify zero/low variance variables and remove
+NZV <- nearZeroVar(df_combine, saveMetrics = TRUE)
+NZV_names <- row.names(NZV[NZV$nzv==TRUE,])
+df_combine <- df_combine[,-which(names(df_combine) %in% NZV_names)]
+```
+
+```{r}
+### idenitfy outliers from top correlating variables and remove them from dataset
+topcorr <- as.data.frame(t(cor(df_combine$SalePrice, select_if(df_combine, is.numeric), use = "pairwise.complete.obs"))) #OverallQual and totalSqFt identified as highest correlating numeric variables
+plot(df_combine$SalePrice ~ df_combine$totalSqFt)
+outliers <- df_combine[df_combine$totalSqFt > 6000 & df_combine$SalePrice < 300000,]
+outliers <- outliers$Id[1:2] # these two ids will be removed as they have a very low sale price despite having large square footage
+paste0("correlation BEFORE outlier removal: ", (cor(df_combine$SalePrice, df_combine$totalSqFt, use = "pairwise.complete.obs")))
+df_combine <- filter(df_combine, !(Id %in% outliers)) # outliers removed now
+paste0("correlation AFTER outlier removal: ", (cor(df_combine$SalePrice, df_combine$totalSqFt, use = "pairwise.complete.obs")))
+```
+
+```{r}
+### Cleaned Data separated back into test and train datasets
+cleanedData_test <- df_combine[is.na(df_combine$SalePrice),]
+cleanedData_train <- df_combine[!is.na(df_combine$SalePrice),] 
+
+cleanedData_train <- cleanedData_train[,-1]
+```
+
+```{r}
+### model REGRESSION
+set.seed(7)
+control <- trainControl(method="repeatedcv", number=10, repeats = 5)
+metric <- "RMSE"
+
+model_reg <- train(log(SalePrice) ~ ., data = cleanedData_train,
+               method="enet", 
+               metric=metric,
+               trControl=control)
+
+mean(model_reg$resample$RMSE) #Average RMSE across all folds
+
+predict <- predict(model_reg, cleanedData_test)
+predict <- exp(predict)
+submission_all_reg <- data.frame(Id = cleanedData_test$Id, SalePrice = predict)
+write.csv(submission_all_reg, "submission_all_reg.csv", row.names = F)
+```
+
+```{r}
+### model RANDOM FOREST
+MC <- makePSOCKcluster(parallel::detectCores())
+registerDoParallel(MC)
+
+set.seed(7)
+control <- trainControl(method="repeatedcv", number=10, repeats = 5)
+metric <- "RMSE"
+#tunegrid <- expand.grid(mtry = seq(from = 1, to = ncol(cleanedData_train), by = 5))
+
+
+model_rf <- train(log(SalePrice) ~ ., data = cleanedData_train,
+               method="rf", 
+               metric=metric, 
+               allowParallel = TRUE,
+               #tuneGrid=tunegrid,
+               trControl=control)
+
+stopCluster(MC); #stops parallel 
+registerDoSEQ() #resets sequential
+
+mean(model_rf$resample$RMSE)#Average RMSE across all folds
+
+predict <- predict(model_rf, cleanedData_test)
+predict <- exp(predict)
+
+submission_all_rf <- data.frame(Id = cleanedData_test$Id, SalePrice = predict)
+write.csv(submission_all_rf, "submission_all_rf.csv", row.names = F)
+```
+
+```{r}
+### model SUPPORT VECTOR REGRESSION
+set.seed(7)
+control <- trainControl(method="repeatedcv", number=10, repeats = 5)
+metric <- "RMSE"
+
+model_svr <- train(log(SalePrice) ~ ., data = cleanedData_train,
+                   method="svmPoly", 
+                   metric=metric, 
+                   trControl=control)
+
+mean(model_svr$resample$RMSE) #Average RMSE across all folds
+
+predict <- predict(model_svr, cleanedData_test)
+predict <- exp(predict)
+submission_all_svr <- data.frame(Id = cleanedData_test$Id, SalePrice = predict)
+write.csv(submission_all_svr, "submission_all_svr.csv", row.names = F)
+```
+
+```{r}
+### Ensemble Model
+submission_all_ensmb <- data.frame(Id = cleanedData_test$Id, SalePrice = apply(data.frame(submission_all_reg$SalePrice, SalePrice_rf = submission_all_rf$SalePrice, SalePrice_svr = submission_all_svr$SalePrice),1,mean))
+write.csv(submission_all_ensmb, "submission_all_ensmb.csv", row.names = F)
+```
+
+```{r}
+### Final Comments
+# Currently my best model performance on the test set is 0.11917 with Support Vector Regression using a Polynomial Kernel. This puts me in the top 25% of entries for the Kaggle competition. There may still be opportunity for improvement through feature engineering/reduction. For example, there are 25 neighbourhoods. These could potentially be reduced down to e.g. upper-class, middle-class, lower-class neighbourhoods. Reducing the number of parameters in the model could improve model performance.
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+            
